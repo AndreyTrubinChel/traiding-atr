@@ -1,0 +1,4 @@
+*.exe
+*.log
+refresh_token.txt
+.env
