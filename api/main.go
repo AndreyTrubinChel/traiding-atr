@@ -91,9 +91,24 @@ func handleLatest(w http.ResponseWriter, r *http.Request) {
 // GET /api/atr/csv — CSV в формате "Инструмент\tЗначение"
 func handleCSV(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT ticker, atr_value
-		FROM atr_latest
-		ORDER BY ticker
+		              SELECT a.ticker, 
+           COALESCE(ba.display_name, a.name) as display_name,
+           COALESCE(ai.base_code, '') as base_code,
+           a.atr_value, 
+           COALESCE(s.step, 0), 
+           COALESCE(s.step_price, 0), 
+           COALESCE(s.lot_size, 0),
+           COALESCE(s.go_buy, 0),
+           COALESCE(s.go_sell, 0),
+           COALESCE(s.last_price, 0),
+           COALESCE(s.spread, 0),
+           COALESCE(s.volume_day, 0),
+           COALESCE(s.num_trades, 0)
+    FROM atr_latest a
+    LEFT JOIN instrument_specs s ON a.ticker = s.ticker
+    LEFT JOIN active_instruments ai ON a.ticker = ai.ticker
+    LEFT JOIN base_assets ba ON ai.base_code = ba.base_code
+    ORDER BY a.ticker
 	`)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -101,24 +116,33 @@ func handleCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	// BOM для Excel (чтобы правильно открывал UTF-8)
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
-	// BOM — специальный символ в начале файла
 	w.Write([]byte{0xEF, 0xBB, 0xBF})
 
-	// Заголовок
-	fmt.Fprint(w, "Инструмент\tЗначение\n")
+	fmt.Fprint(w, "Инструмент\tНазвание\tБаз.актив\tATR\tШаг\tСтоимость шага\tЛот\tГО покупки\tГО продажи\tЦена\tСпред\tОбъём за день\tСделок\n")
 
 	for rows.Next() {
-		var ticker string
-		var atr float64
-		if err := rows.Scan(&ticker, &atr); err != nil {
-			continue
-		}
-		shortTicker := strings.TrimSuffix(ticker, "U6")
-		atrStr := strings.Replace(fmt.Sprintf("%.10f", atr), ".", ",", 1)
-		fmt.Fprintf(w, "%s\t%s\n", shortTicker, atrStr)
+	var ticker, displayName, baseCode string
+	var atr, step, stepPrice, lotSize, goBuy, goSell, lastPrice, spread, volumeDay float64
+	var numTrades int
+	if err := rows.Scan(&ticker, &	displayName, &baseCode, &atr, &step, &stepPrice, &lotSize, &goBuy, &goSell, &lastPrice, &spread, &volumeDay, &numTrades); err != nil {
+		continue
+	}
+shortTicker := strings.TrimSuffix(ticker, "U6")
+fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
+    shortTicker, displayName, baseCode,
+    strings.Replace(fmt.Sprintf("%.10f", atr), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.4f", step), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", stepPrice), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.0f", lotSize), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", goBuy), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", goSell), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", lastPrice), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", spread), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.0f", volumeDay), ".", ",", 1),
+    numTrades,
+	)
+	
 	}
 }
