@@ -38,7 +38,7 @@ var tickers = map[string]string{
 	"MMU6": "Мосбиржа",
 	"MNU6": "Норникель",
 	"LKU6": "Лукойл",
-	"SIU6": "Доллар/Рубль",
+	"SiU6": "Доллар/Рубль",
 	"VBU6": "ВТБ",
 	"SVU6": "Сбербанк-преф",
 	"GDU6": "Золото",
@@ -121,7 +121,7 @@ func main() {
 
 		atr, err := getATR(accessToken, ticker)
 		if err != nil {
-			log.Printf("  ⚠️ Ошибка ATR: %v", err)
+			log.Printf("  ⚠️ Ошибка ATR [%s]: %v", ticker, err)
 			continue
 		}
 
