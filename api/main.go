@@ -91,19 +91,29 @@ func handleLatest(w http.ResponseWriter, r *http.Request) {
 // GET /api/atr/csv — CSV в формате "Инструмент\tЗначение"
 func handleCSV(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		              SELECT a.ticker, 
-           COALESCE(ba.display_name, a.name) as display_name,
-           COALESCE(ai.base_code, '') as base_code,
-           a.atr_value, 
-           COALESCE(s.step, 0), 
-           COALESCE(s.step_price, 0), 
-           COALESCE(s.lot_size, 0),
-           COALESCE(s.go_buy, 0),
-           COALESCE(s.go_sell, 0),
-           COALESCE(s.last_price, 0),
-           COALESCE(s.spread, 0),
-           COALESCE(s.volume_day, 0),
-           COALESCE(s.num_trades, 0)
+		SELECT 
+        COALESCE(ai.base_code, '') as base_code,
+        COALESCE(ba.display_name, a.name) as display_name,
+        a.ticker,
+        COALESCE(TO_CHAR(s.maturity_date, 'DD.MM.YYYY'), '') as maturity_date,
+        CASE WHEN COALESCE(s.last_price, 0) > 0 OR COALESCE(s.volume_day, 0) > 0 OR COALESCE(s.num_trades, 0) > 0 
+            THEN 'Торгуется' 
+            ELSE 'Нет торгов' 
+        END as status,
+        COALESCE(s.step, 0) as step,
+        COALESCE(s.step_price, 0) as step_price,
+        COALESCE(s.lot_size, 0) as lot_size,
+        COALESCE(s.go_buy, 0) as go_buy,
+        COALESCE(s.go_sell, 0) as go_sell,
+        COALESCE(s.last_price, 0) as last_price,
+        COALESCE(s.open_price, 0) as open_price,
+        COALESCE(s.high_price, 0) as high_price,
+        COALESCE(s.low_price, 0) as low_price,
+        COALESCE(s.prev_close, 0) as prev_close,
+        COALESCE(s.spread, 0) as spread,
+        COALESCE(s.volume_day, 0) as volume_day,
+        COALESCE(s.num_trades, 0) as num_trades,
+        a.atr_value
     FROM atr_latest a
     LEFT JOIN instrument_specs s ON a.ticker = s.ticker
     LEFT JOIN active_instruments ai ON a.ticker = ai.ticker
@@ -120,29 +130,42 @@ func handleCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write([]byte{0xEF, 0xBB, 0xBF})
 
-	fmt.Fprint(w, "Инструмент\tНазвание\tБаз.актив\tATR\tШаг\tСтоимость шага\tЛот\tГО покупки\tГО продажи\tЦена\tСпред\tОбъём за день\tСделок\n")
+fmt.Fprint(w, "Инструмент\tНазвание\tБаз.актив\tТикер\tЭкспирация\tДней до эксп.\tСтатус\tШаг\tСтоимость шага\tЛот\tГО покупки\tГО продажи\tЦена\tOPEN\tHIGH\tLOW\tPrevClose\tСпред\tОбъём за день\tСделок\tATR\n")
 
 	for rows.Next() {
-	var ticker, displayName, baseCode string
-	var atr, step, stepPrice, lotSize, goBuy, goSell, lastPrice, spread, volumeDay float64
-	var numTrades int
-	if err := rows.Scan(&ticker, &	displayName, &baseCode, &atr, &step, &stepPrice, &lotSize, &goBuy, &goSell, &lastPrice, &spread, &volumeDay, &numTrades); err != nil {
-		continue
-	}
-shortTicker := strings.TrimSuffix(ticker, "U6")
-fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
-    shortTicker, displayName, baseCode,
-    strings.Replace(fmt.Sprintf("%.10f", atr), ".", ",", 1),
+		var baseCode, displayName, ticker, maturityDate, status string
+var step, stepPrice, lotSize, goBuy, goSell, lastPrice, openPrice, highPrice, lowPrice, prevClose, spread, volumeDay, atr float64
+var numTrades int
+if err := rows.Scan(&baseCode, &displayName, &ticker, &maturityDate, &status, &step, &stepPrice, &lotSize, &goBuy, &goSell, &lastPrice, &openPrice, &highPrice, &lowPrice, &prevClose, &spread, &volumeDay, &numTrades, &atr); err != nil {
+    continue
+}
+
+		shortTicker := strings.TrimSuffix(ticker, "U6")
+daysToExpiry := ""
+if maturityDate != "" {
+    if t, err := time.Parse("02.01.2006", maturityDate); err == nil {
+        days := int(t.Sub(time.Now()).Hours() / 24)
+        daysToExpiry = fmt.Sprintf("%d", days)
+    }
+}
+
+fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+    shortTicker, displayName, baseCode, ticker,
+    maturityDate, daysToExpiry, status,
     strings.Replace(fmt.Sprintf("%.4f", step), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.2f", stepPrice), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.0f", lotSize), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.2f", goBuy), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.2f", goSell), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.2f", lastPrice), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", openPrice), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", highPrice), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", lowPrice), ".", ",", 1),
+    strings.Replace(fmt.Sprintf("%.2f", prevClose), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.2f", spread), ".", ",", 1),
     strings.Replace(fmt.Sprintf("%.0f", volumeDay), ".", ",", 1),
     numTrades,
-	)
-	
+    strings.Replace(fmt.Sprintf("%.10f", atr), ".", ",", 1),
+)
 	}
 }

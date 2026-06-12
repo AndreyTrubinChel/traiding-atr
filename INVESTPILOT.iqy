@@ -1,0 +1,11 @@
+WEB
+1
+http://194.226.20.120:8080/api/atr/csv
+
+Selection=EntirePage
+Formatting=None
+PreFormattedTextToColumns=False
+ConsecutiveDelimitersAsOne=True
+SingleBlockTextImport=False
+DisableDateRecognition=True
+DisableRedirections=False

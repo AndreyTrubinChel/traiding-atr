@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"trading-atr/collector/moex"
 
 	_ "github.com/lib/pq"
 )
@@ -149,22 +150,31 @@ func main() {
 		successCount++
 	}
 
-	// ГО из API Мосбиржи
+		// ГО и рыночные данные из API Мосбиржи
 	for ticker := range tickers {
-goBuy, goSell, moexLot, lastPrice, spread, volumeDay, numTrades, err := getMoexSpec(ticker)
-// ...
-_, err = db.Exec(
-    `UPDATE instrument_specs SET go_buy=$1, go_sell=$2, lot_size=$3, last_price=$4, spread=$5, volume_day=$6, num_trades=$7, updated_at=NOW() WHERE ticker=$8`,
-    goBuy, goSell, moexLot, lastPrice, spread, volumeDay, numTrades, ticker,
-)
-
-if err != nil {
-    log.Printf("⚠️ Ошибка сохранения ГО для %s: %v", ticker, err)
-} else {
-    	log.Printf("📋 %s: ГО=%.2f, Лот=%.0f, Цена=%.2f, Спред=%.2f, Объём=%.0f ₽, Сделок=%d", 
-    	ticker, goBuy, moexLot, lastPrice, spread, volumeDay, numTrades)
+		spec, err := moex.GetSpec(ticker)
+		if err != nil {
+			log.Printf("⚠️ Ошибка получения данных Мосбиржи для %s: %v", ticker, err)
+			continue
+		}
+		_, err = db.Exec(
+			`UPDATE instrument_specs SET 
+			 go_buy=$1, go_sell=$2, lot_size=$3, last_price=$4, spread=$5, volume_day=$6, 
+			 open_price=$7, high_price=$8, low_price=$9, prev_close=$10, num_trades=$11, 
+			 maturity_date=$12, updated_at=NOW() 
+			 WHERE ticker=$13`,
+			spec.GoBuy, spec.GoSell, spec.LotSize, spec.LastPrice, spec.Spread, spec.VolumeDay,
+			spec.OpenPrice, spec.HighPrice, spec.LowPrice, spec.PrevClose, spec.NumTrades,
+			spec.MaturityDate, ticker,
+		)
+		if err != nil {
+			log.Printf("⚠️ Ошибка сохранения данных для %s: %v", ticker, err)
+		} else {
+			log.Printf("📋 %s: ГО=%.2f, Цена=%.2f, Спред=%.4f, Объём=%.0f ₽, Сделок=%d, Экспирация=%s",
+				ticker, spec.GoBuy, spec.LastPrice, spec.Spread, spec.VolumeDay, spec.NumTrades, spec.MaturityDate)
 		}
 	}
+
 	log.Printf("=== Готово! Обработано %d из %d ===", successCount, len(tickers))
 }
 
@@ -215,7 +225,7 @@ func getActiveTickers(db *sql.DB) (map[string]string, error) {
 
 func getATR(accessToken, ticker string) (float64, error) {
 	now := time.Now().UTC()
-	from := now.Add(-5 * 24 * time.Hour)
+	from := now.Add(-14 * 24 * time.Hour)
 	req, err := http.NewRequest("GET", BSC_CANDLES_URL, nil)
 	if err != nil {
 		return 0, err
@@ -302,70 +312,3 @@ func getSpecs(accessToken string, tickers []string) (map[string]SpecInfo, error)
 	return result, nil
 }
 
-func getMoexSpec(ticker string) (goBuy, goSell, lotSize, lastPrice, spread, volumeDay float64, numTrades int, err error) {
-	url := fmt.Sprintf("https://iss.moex.com/iss/engines/futures/markets/forts/securities/%s.json", ticker)
-	req, _ := http.NewRequest("GET", url, nil)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, 0, 0, 0, 0, 0, 0, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var result struct {
-		Securities struct {
-			Data    [][]interface{} `json:"data"`
-			Columns []string        `json:"columns"`
-		} `json:"securities"`
-		Marketdata struct {
-			Data    [][]interface{} `json:"data"`
-			Columns []string        `json:"columns"`
-		} `json:"marketdata"`
-	}
-	json.Unmarshal(body, &result)
-
-	// Из securities
-	if len(result.Securities.Data) > 0 {
-		row := result.Securities.Data[0]
-		for i, col := range result.Securities.Columns {
-			switch col {
-			case "INITIALMARGIN":
-				if v, ok := row[i].(float64); ok {
-					goBuy, goSell = v, v
-				}
-			case "LOTVOLUME":
-				if v, ok := row[i].(float64); ok {
-					lotSize = v
-				}
-			}
-		}
-	}
-
-	// Из marketdata
-	if len(result.Marketdata.Data) > 0 {
-		row := result.Marketdata.Data[0]
-		for i, col := range result.Marketdata.Columns {
-			switch col {
-			case "LAST":
-				if v, ok := row[i].(float64); ok {
-					lastPrice = v
-				}
-			case "SPREAD":
-				if v, ok := row[i].(float64); ok {
-					spread = v
-				}
-			case "VALTODAY":
-				if v, ok := row[i].(float64); ok {
-					volumeDay = v
-				}
-			case "NUMTRADES":
-				if v, ok := row[i].(float64); ok {
-					numTrades = int(v)
-				}
-			}
-		}
-	}
-
-	return goBuy, goSell, lotSize, lastPrice, spread, volumeDay, numTrades, nil
-}
