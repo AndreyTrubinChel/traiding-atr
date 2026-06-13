@@ -158,15 +158,15 @@ func main() {
 			continue
 		}
 		_, err = db.Exec(
-			`UPDATE instrument_specs SET 
-			 go_buy=$1, go_sell=$2, lot_size=$3, last_price=$4, spread=$5, volume_day=$6, 
-			 open_price=$7, high_price=$8, low_price=$9, prev_close=$10, num_trades=$11, 
-			 maturity_date=$12, updated_at=NOW() 
-			 WHERE ticker=$13`,
-			spec.GoBuy, spec.GoSell, spec.LotSize, spec.LastPrice, spec.Spread, spec.VolumeDay,
-			spec.OpenPrice, spec.HighPrice, spec.LowPrice, spec.PrevClose, spec.NumTrades,
-			spec.MaturityDate, ticker,
-		)
+    `UPDATE instrument_specs SET 
+     go_buy=$1, go_sell=$2, lot_size=$3, last_price=$4, spread=$5, volume_day=$6, 
+     open_price=$7, high_price=$8, low_price=$9, prev_close=$10, num_trades=$11, 
+     updated_at=NOW() 
+     WHERE ticker=$12`,
+    spec.GoBuy, spec.GoSell, spec.LotSize, spec.LastPrice, spec.Spread, spec.VolumeDay,
+    spec.OpenPrice, spec.HighPrice, spec.LowPrice, spec.PrevClose, spec.NumTrades,
+    ticker,
+)
 		if err != nil {
 			log.Printf("⚠️ Ошибка сохранения данных для %s: %v", ticker, err)
 		} else {
@@ -207,20 +207,18 @@ func getAccessToken(refreshToken string) (string, string, error) {
 }
 
 func getActiveTickers(db *sql.DB) (map[string]string, error) {
-	rows, err := db.Query("SELECT ticker, name FROM active_instruments WHERE is_active = TRUE")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	tickers := make(map[string]string)
-	for rows.Next() {
-		var ticker, name string
-		if err := rows.Scan(&ticker, &name); err != nil {
-			continue
-		}
-		tickers[ticker] = name
-	}
-	return tickers, nil
+    rows, err := db.Query("SELECT DISTINCT ticker, ticker FROM user_instruments")
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+    tickers := make(map[string]string)
+    for rows.Next() {
+        var ticker, name string
+        rows.Scan(&ticker, &name)
+        tickers[ticker] = ticker
+    }
+    return tickers, nil
 }
 
 func getATR(accessToken, ticker string) (float64, error) {
@@ -310,5 +308,69 @@ func getSpecs(accessToken string, tickers []string) (map[string]SpecInfo, error)
 		}
 	}
 	return result, nil
+}
+
+func getMoexSpec(ticker string) (goBuy, goSell, lotSize, lastPrice, spread, volumeDay, openPrice, highPrice, lowPrice, prevClose float64, numTrades int, maturityDate string, err error) {
+	url := fmt.Sprintf("https://iss.moex.com/iss/engines/futures/markets/forts/securities/%s.json", ticker)
+	req, _ := http.NewRequest("GET", url, nil)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var result struct {
+		Securities struct {
+			Data    [][]interface{} `json:"data"`
+			Columns []string        `json:"columns"`
+		} `json:"securities"`
+		Marketdata struct {
+			Data    [][]interface{} `json:"data"`
+			Columns []string        `json:"columns"`
+		} `json:"marketdata"`
+	}
+	json.Unmarshal(body, &result)
+
+	if len(result.Securities.Data) > 0 {
+		row := result.Securities.Data[0]
+		for i, col := range result.Securities.Columns {
+			switch col {
+			case "INITIALMARGIN":
+				if v, ok := row[i].(float64); ok { goBuy, goSell = v, v }
+			case "LOTVOLUME":
+				if v, ok := row[i].(float64); ok { lotSize = v }
+			case "LASTTRADEDATE":
+				if v, ok := row[i].(string); ok { maturityDate = v }
+			}
+		}
+	}
+
+	if len(result.Marketdata.Data) > 0 {
+		row := result.Marketdata.Data[0]
+		for i, col := range result.Marketdata.Columns {
+			switch col {
+			case "LAST":
+				if v, ok := row[i].(float64); ok { lastPrice = v }
+			case "SPREAD":
+				if v, ok := row[i].(float64); ok { spread = v }
+			case "VALTODAY":
+				if v, ok := row[i].(float64); ok { volumeDay = v }
+			case "NUMTRADES":
+				if v, ok := row[i].(float64); ok { numTrades = int(v) }
+			case "OPEN":
+				if v, ok := row[i].(float64); ok { openPrice = v }
+			case "HIGH":
+				if v, ok := row[i].(float64); ok { highPrice = v }
+			case "LOW":
+				if v, ok := row[i].(float64); ok { lowPrice = v }
+			case "SETTLEPRICE":
+				if v, ok := row[i].(float64); ok { prevClose = v }
+			}
+		}
+	}
+
+	return goBuy, goSell, lotSize, lastPrice, spread, volumeDay, openPrice, highPrice, lowPrice, prevClose, numTrades, maturityDate, nil
 }
 
