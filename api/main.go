@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"trading-atr/pkg/future"
 
 	_ "github.com/lib/pq"
 )
@@ -400,12 +401,12 @@ func findActiveTicker(baseCode string) string {
 			if v, ok := row[idx].(string); ok { secType = v }
 		}
 		if ticker != "" && secType == "futures" && strings.HasPrefix(ticker, searchPrefix) {
-    	f := &Future{Ticker: ticker}
-    	if err := f.LoadMoex(); err == nil && f.IsTrading() {
-    	log.Printf("findActiveTicker: НАЙДЕН %s для %s", ticker, baseCode)
+    	d := &future.Derivative{Ticker: ticker}
+    	if err := d.LoadFromMoex(); err == nil && !d.IsExpired() {
+        	log.Printf("findActiveTicker: НАЙДЕН %s для %s", ticker, baseCode)
         return ticker
-		}
     }
+}
 }
 	log.Printf("findActiveTicker: НЕ НАЙДЕН для %s", baseCode)
 	return ""
